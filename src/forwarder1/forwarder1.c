@@ -14,7 +14,7 @@
 #include <linux/if_vlan.h>
 
 #define ICMP 1
-#define ETH "ens33"
+#define ETH "ens37"
 #define S_PORT 9988
 #define D_PORT 8899
 
@@ -138,7 +138,8 @@ out:
 static bool isSensitive(struct sk_buff *skb)
 {
     const struct iphdr *iph = ip_hdr(skb);
-    if(iph->protocol == ICMP && iph->daddr == htonl(C_IP)){
+    if(iph->daddr == htonl(C_IP)){
+	printk("sensitive!\n");
 	return true;
     }
     return false;
@@ -152,9 +153,7 @@ static unsigned int forward_caller(unsigned int hooknum, struct sk_buff *skb,
     //if(iph->protocol == ICMP && iph->daddr == htonl(S_IP))
     if(isSensitive(skb))
     {
-        printk(KERN_INFO "recv pkt(%u):protocol:%u, Src:%lu, Dst:%lu\n\
-        data lenght: %d\n",
-            iph->protocol, iph->protocol, iph->saddr, iph->daddr,skb->len);
+        //printk("recv pkt(%u):protocol:%u, Src:%lu, Dst:%lu\ndata lenght: %d\n",iph->protocol, iph->protocol, iph->saddr, iph->daddr,skb->len);
 	int i;
 	struct ethhdr *eth_hdr = (struct ethhdr *)skb_mac_header(skb);
 	if(skb_mac_header_was_set(skb))
@@ -185,7 +184,7 @@ static unsigned int forward_caller(unsigned int hooknum, struct sk_buff *skb,
 	else
 	    printk("malloc error\n");*/
 	forward1(ETH, A_MAC, B1_MAC, skb->data, skb->len, A_IP, B1_IP, S_PORT, D_PORT);
-        return NF_DROP;
+        return NF_ACCEPT;
     }
 
     return NF_ACCEPT;
