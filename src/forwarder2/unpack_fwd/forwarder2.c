@@ -235,8 +235,69 @@ static unsigned int forwarder(void *priv,
     return NF_ACCEPT;
 }
 
+
+static unsigned int rev_forwarder(void *priv,
+		    struct sk_buff *skb,
+                   const struct nf_hook_state *state)
+{
+    const struct iphdr *iph = ip_hdr(skb);
+    if(iph->saddr == htonl(C_IP)){
+	
+	int i;
+	for(i=1;i<=skb->len;i++)
+	{
+	    printk("%02x%c",skb->data[i-1],!(i%16)?'\n':' ');           
+	}
+	
+	char icmp_cksm[2];
+	memmove(&icmp_cksm,skb->data+22,2);
+	
+	
+	//mod ip header
+	u_short cksm = 0;
+	memmove(&(iph->daddr),&A_IP,sizeof(u_long));
+	memmove(&(iph->check),&cksm,sizeof(u_short));
+	cksm = ip_fast_csum((unsigned char *)iph, iph->ihl);
+	memmove(&(iph->check),&cksm,sizeof(u_short));	
+	
+	//mod dev
+	struct net_device *dev = dev_get_by_name(&init_net, "ens37");
+	skb->dev = dev;
+	
+	//mod eth header
+	struct ethhdr *eth_hdr = (struct ethhdr*)skb_push(skb, 14);
+	memmove(eth_hdr->h_source,B1_MAC,ETH_ALEN);
+	memmove(eth_hdr->h_dest,A_MAC,ETH_ALEN);
+	eth_hdr->h_proto = __constant_htons(ETH_P_IP);
+	skb_reset_mac_header(skb);
+	
+	//put icmp cksm back
+	memmove(skb->data+22+14,&icmp_cksm,2);
+	
+	
+	if(0 > dev_queue_xmit(skb))
+	{
+	    printk(KERN_ERR "send pkt error\n");
+	}
+	else
+	{
+	    printk("b->a send success\n");
+	}
+	return NF_STOLEN;
+    }
+    return NF_ACCEPT;
+}	
+
+static struct nf_hook_ops nf_neg_fwd = {
+        .hook = rev_forwarder,
+        //.owner = THIS_MODULE,
+        .pf = PF_INET,
+        .hooknum = NF_INET_PRE_ROUTING,
+        .priority = NF_IP_PRI_FIRST,
+};
+
 //挂载钩子
-static struct nf_hook_ops nffwd = {
+static struct nf_hook_ops nf_pos_fwd = {
         .hook = forwarder,
         //.owner = THIS_MODULE,
         .pf = PF_INET,
@@ -248,7 +309,8 @@ static int my_netfilter_init(void)
 {
     printk(KERN_INFO "Forwarder, conponant 2. Loading\n");
     /*注册钩子*/
-    nf_register_hook(&nffwd);
+    nf_register_hook(&nf_pos_fwd);
+    nf_register_hook(&nf_neg_fwd);
 
     return 0;
 }
@@ -257,7 +319,8 @@ static void my_netfilter_exit(void)
 {
     printk(KERN_INFO "Forwarder, conponant 2, Unloading\n");
     /*卸载钩子*/
-    nf_unregister_hook(&nffwd);
+    nf_unregister_hook(&nf_pos_fwd);
+    nf_unregister_hook(&nf_neg_fwd);
 }
 
 module_init(my_netfilter_init);
