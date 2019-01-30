@@ -1,0 +1,1 @@
+cmd_/home/wayne/document/code/forwarder/lab/confirm/confirm.ko := ld -r -m elf_x86_64 -T ./scripts/module-common.lds --build-id  -o /home/wayne/document/code/forwarder/lab/confirm/confirm.ko /home/wayne/document/code/forwarder/lab/confirm/confirm.o /home/wayne/document/code/forwarder/lab/confirm/confirm.mod.o
