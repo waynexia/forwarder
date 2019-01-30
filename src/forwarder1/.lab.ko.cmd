@@ -1,1 +1,0 @@
-cmd_/home/wayne/document/code/forwarder/forwarder1/lab.ko := ld -r -m elf_x86_64 -T ./scripts/module-common.lds --build-id  -o /home/wayne/document/code/forwarder/forwarder1/lab.ko /home/wayne/document/code/forwarder/forwarder1/lab.o /home/wayne/document/code/forwarder/forwarder1/lab.mod.o
