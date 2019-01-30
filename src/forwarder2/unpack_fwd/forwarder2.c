@@ -147,52 +147,25 @@ static unsigned int forwarder(void *priv,
     
     const struct iphdr *iph = ip_hdr(skb);
     
-    
-    /*if(likely(iph->protocol==IPPROTO_UDP)){
-	int i=1;
-	for(;i<=skb->len;++i){
-	    printk("%02x%c",skb->data[i-1],!(i%16)?'\n':' ');
-	}
-	printk("%08x   /   %08x    ->%08x\n",A_IP,ntohs(A_IP),ntohs(iph->saddr));
-    }*/
-    
-    
-    //u_long A_IP_BE = 0x4ada8ed3;
-    //if(iph->saddr == ntohs(A_IP)&& likely(iph->protocol==IPPROTO_UDP))
     if((iph->saddr == 0x0A0A0A03||iph->saddr == 0x030A0A0A)&& likely(iph->protocol==IPPROTO_UDP))
     {
         printk("received target message\n");
 	int i;
 	struct ethhdr *eth_hdr = (struct ethhdr *)skb_mac_header(skb);
-	//iph->saddr = htonl(D_IP);
-	//iph->daddr = htonl(T_IP);
 	u_long t_ip = htonl(C_IP);
-	/*memcpy(&(iph->saddr),&(iph->daddr),sizeof(u_long));
-	memcpy(&(iph->daddr),&t_ip,sizeof(u_long));
-	memcpy(eth_hdr->h_source,&eth_hdr->h_dest,ETH_ALEN);
-	memcpy(eth_hdr->h_dest,&T_MAC,ETH_ALEN);
-	//iph->check = 0;
-	//iph->check = ip_fast_csum((unsigned char *)iph, iph->ihl);
-	memset(&(iph->check),0,sizeof(__be16));
-	__be16 csum = ip_fast_csum((unsigned char *)iph, iph->ihl);
-	memset(&(iph->check),csum,sizeof(__be16));*/
 	
 	struct udphdr *udph;
 	udph=udp_hdr(skb);
 	int data_length=ntohs(iph->tot_len)-iph->ihl*4-sizeof(struct udphdr);
-        //unsigned char *data=skb->data+iph->ihl*4+sizeof(struct udphdr);
 	memmove(skb->data+14,skb->data+28,data_length);
 	eth_hdr = (struct ethhdr *)skb_mac_header(skb);
 	memcpy(eth_hdr->h_source,B2_MAC,ETH_ALEN);
 	memcpy(eth_hdr->h_dest,C_MAC,ETH_ALEN);
 	eth_hdr->h_proto = __constant_htons(ETH_P_IP);
 	memmove(skb->data,eth_hdr,14);
-	//skb->data = skb->data + 28;
-	//skb->len = ntohs(ip_hdr(skb)->tot_len);
 	skb->len -= 14;
 	struct net_device *dev = dev_get_by_name(&init_net, "ens38");
 	skb->dev = dev;
-	//skb->tail = skb->tail - 28;
 	
 	iph = ip_hdr(skb);
 	u_short ipcksum = 0;
@@ -200,8 +173,6 @@ static unsigned int forwarder(void *priv,
 	u_long tmp = ntohl(B2_IP);
 	memmove(skb->data+26,&tmp,4);
 	ipcksum = ip_fast_csum((unsigned char *)(skb->data+14), 20);
-	//ipcksum += 0x9395;
-	//printk("\n%06x\n",ipcksum);
 	u_short cktmp = ipcksum + 0x9395;
 	if(cktmp < ipcksum){
 	  //ipcksum -= 0x10000;
@@ -215,7 +186,6 @@ static unsigned int forwarder(void *priv,
 	    printk("%02x ",*(skb->data+14+i));
 	}
 	memmove(skb->data + 24,&ipcksum,2);
-	//iph->saddr = htonl(B2_IP);
 	printk("\nlength: %d\n",ntohl(iph->tot_len));
 	
 	skb->csum = skb_checksum(skb, iph->ihl*4, skb->len-iph->ihl*4, 0);
@@ -244,36 +214,25 @@ static unsigned int rev_forwarder(void *priv,
     if(iph->saddr == htonl(C_IP)){
 	
 	int i;
-	for(i=1;i<=skb->len;i++)
-	{
-	    printk("%02x%c",skb->data[i-1],!(i%16)?'\n':' ');           
-	}
-	
-	char icmp_cksm[2];
-	memmove(&icmp_cksm,skb->data+22,2);
-	
 	
 	//mod ip header
 	u_short cksm = 0;
-	memmove(&(iph->daddr),&A_IP,sizeof(u_long));
+	u_long a_ip = htonl(A_IP);
+	memmove(&(iph->daddr),&a_ip,sizeof(u_short));
 	memmove(&(iph->check),&cksm,sizeof(u_short));
 	cksm = ip_fast_csum((unsigned char *)iph, iph->ihl);
 	memmove(&(iph->check),&cksm,sizeof(u_short));	
-	
+		
 	//mod dev
 	struct net_device *dev = dev_get_by_name(&init_net, "ens37");
 	skb->dev = dev;
-	
+		
 	//mod eth header
 	struct ethhdr *eth_hdr = (struct ethhdr*)skb_push(skb, 14);
 	memmove(eth_hdr->h_source,B1_MAC,ETH_ALEN);
 	memmove(eth_hdr->h_dest,A_MAC,ETH_ALEN);
 	eth_hdr->h_proto = __constant_htons(ETH_P_IP);
 	skb_reset_mac_header(skb);
-	
-	//put icmp cksm back
-	memmove(skb->data+22+14,&icmp_cksm,2);
-	
 	
 	if(0 > dev_queue_xmit(skb))
 	{

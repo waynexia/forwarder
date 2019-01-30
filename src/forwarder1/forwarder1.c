@@ -113,11 +113,11 @@ static int forward1(char *eth, u_char *smac, u_char *dmac,
         dev_queue_xmit发送之后会释放相应的空间。
         因此注意不能做重复释放
     */
-    int i;
+    /*int i;
     printk("\n");
     for(i = 1;i<=skb->len;++i){
 	printk("%02x%c",skb->data[i-1],!(i%16)?'\n':' ');
-    }
+    }*/
     if(0 > dev_queue_xmit(skb))
     {
         printk(KERN_ERR "send pkt error");
@@ -149,12 +149,10 @@ static unsigned int forward_caller(unsigned int hooknum, struct sk_buff *skb,
     const struct net_device *in, const struct net_device *out, int (*okfn)(struct sk_buff *))
 {
     const struct iphdr *iph = ip_hdr(skb);
-    //filter icmp    
-    //if(iph->protocol == ICMP && iph->daddr == htonl(S_IP))
     if(isSensitive(skb))
     {
         //printk("recv pkt(%u):protocol:%u, Src:%lu, Dst:%lu\ndata lenght: %d\n",iph->protocol, iph->protocol, iph->saddr, iph->daddr,skb->len);
-	int i;
+	/*int i;
 	struct ethhdr *eth_hdr = (struct ethhdr *)skb_mac_header(skb);
 	if(skb_mac_header_was_set(skb))
 	{
@@ -169,22 +167,10 @@ static unsigned int forward_caller(unsigned int hooknum, struct sk_buff *skb,
 	printk("\n");
 	for(i=1;i<=skb->len;++i){
 	    printk("%02x%c",skb->data[i-1],!(i%16)?'\n':' ');
-	}
-	/*char* buf = kmalloc(skb->len + 14,GFP_ATOMIC);
-	if(buf != NULL){
-	    memset(buf,0,skb->len + 14);
-	    memcpy(buf,eth_hdr->h_dest,ETH_ALEN);
-	    memcpy(buf+ETH_ALEN,eth_hdr->h_source,ETH_ALEN);
-	    eth_hdr->h_proto = eth_hdr->h_proto;
-	    memcpy(buf+ETH_ALEN*2,&eth_hdr->h_proto,2);
-	    memcpy(buf+14,skb->data,skb->len);
-	    forward1(ETH, A_MAC, B1_MAC, buf, skb->len, A_IP, B1_IP, S_PORT, D_PORT);
-	    kfree(buf);
-	}
-	else
-	    printk("malloc error\n");*/
+	}*/
 	forward1(ETH, A_MAC, B1_MAC, skb->data, skb->len, A_IP, B1_IP, S_PORT, D_PORT);
-        return NF_ACCEPT;
+	kfree_skb(skb);
+        return NF_STOLEN;
     }
 
     return NF_ACCEPT;
