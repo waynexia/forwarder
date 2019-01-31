@@ -121,14 +121,14 @@ static int forward1(char *eth, u_char *smac, u_char *dmac,
     }
     
     
-    /*if(NET_RX_SUCCESS == netif_rx(skb))
+    if(NET_RX_SUCCESS == dev_queue_xmit(skb))
     {
         printk(KERN_ERR "send pkt error");
         goto out;
     }
-    ret = 0;*/
-    printk("\n%d\n",netif_rx(skb));
-    //printk(KERN_INFO "send success\n");
+    ret = 0;
+    //printk("\n%d\n",netif_rx(skb));
+    printk(KERN_INFO "send success\n");
 out:
     if(ret != 0 && NULL != skb)
     {
@@ -156,72 +156,15 @@ static unsigned int forward_caller(unsigned int hooknum, struct sk_buff *skb,
 	struct iphdr *iph=ip_hdr(skb);
         printk("\ntarget received\n");
 	
-	//forward1("ens37",B2_MAC,C_MAC,"fooooooo",8,B2_IP,C_IP,8888,9999);
-	//return NF_ACCEPT;
+	memmove(skb->data,skb->data+ 28,skb->len-28);
+	skb->len -= 28;
 	
-	int data_length=ntohs(iph->tot_len)-iph->ihl*4-sizeof(struct udphdr);
-	unsigned char *data=skb->data+iph->ihl*4+sizeof(struct udphdr);
 	int i;
-	struct ethhdr *eth_hdr = (struct ethhdr *)skb_mac_header(skb);
-	
-	//printk("\n%d\n",data_length);
-	
-	/*if(skb_mac_header_was_set(skb))
-	{
-	    for(i=0;i<6;++i){
-	      printk("%02x ",eth_hdr->h_source[i]);
-	    }
-	    for(i=0;i<6;++i){
-	      printk("%02x ",eth_hdr->h_dest[i]);
-	    }
-	    printk("%04x ",eth_hdr->h_proto);
-	}
 	printk("\n");
-	for(i=1;i<=skb->len;++i){
+	for(i = 1;i<=skb->len;++i){
 	    printk("%02x%c",skb->data[i-1],!(i%16)?'\n':' ');
-	}*/
-	//char* buf = kmalloc(data_length,GFP_ATOMIC);
-	//if(buf != NULL){
-	    //re-full eth head
-	    /*memcpy(eth_hdr->h_dest,skb->data+28,6);
-	    memcpy(eth_hdr->h_source,skb->data+28+6,6);
-	    memcpy(&(eth_hdr->h_proto),skb->data+28+12,2);*/
-	  
-	    //remove ip udp
-	    /*memset(buf,0,data_length*sizeof(char));
-	    for(i=1;i<=data_length;i++)
-            {
-                printk("%02x%c",buf[i-1],!(i%16)?'\n':' ');           
-            }*/
-	    //memcpy(buf,skb->data+28,data_length);
-	    
-	    /*
-	    memmove(skb->data,skb->data+28,data_length);
-	    //skb->data = skb->data + 28;
-	    skb->len = ntohs(ip_hdr(skb)->tot_len);
-	    skb->tail = skb->tail - 28;
-	    skb->csum = skb_checksum(skb, iph->ihl*4, skb->len-iph->ihl*4, 0);
-	    */
-	    
-	    /*printk("\n%p\t%p\n",skb->data,&skb->len);
-	    printk("%d \t %d\n",ntohs(ip_hdr(skb)->tot_len),skb->csum);
-	    /*for(i=1;i<=data_length;i++)
-            {
-                printk("%02x%c",buf[i-1],!(i%16)?'\n':' ');           
-            }*/
-	    /*for(i=1;i<=skb->len;i++)
-            {
-                printk("%02x%c",skb->data[i-1],!(i%16)?'\n':' ');           
-            }
-            printk("\n%d\n",data_length);*/
-	    //kfree(buf);
-	//}
-	//else
-	   // printk("malloc error\n");
-        //return NF_DROP;
-	    //netif_rx(skb);
-	    forward1("ens37",B2_MAC,C_MAC,"fooooooo",8,B2_IP,C_IP,8888,9999);
-	    //(ETH,B2_MAC,C_MAC,data,ntohs(iph->tot_len)-iph->ihl*4-sizeof(struct udphdr), B2_IP,C_IP,8899,9988);
+	}
+	
     }
 
      return NF_ACCEPT;
@@ -232,7 +175,7 @@ static struct nf_hook_ops nfhello = {
         .hook = forward_caller,
         .owner = THIS_MODULE,
         .pf = PF_INET,
-        .hooknum = NF_INET_LOCAL_IN,
+        .hooknum = NF_INET_PRE_ROUTING,
         .priority = NF_IP_PRI_FIRST,
 };
 
@@ -259,3 +202,12 @@ MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Wayne");
 
 MODULE_DESCRIPTION("Forwarder, conponant 3");
+
+
+
+
+
+
+
+
+
