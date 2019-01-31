@@ -15,19 +15,21 @@
 #include <linux/if_vlan.h>
 
 #define ICMP 1
-#define ETH "ens33"
+#define ETH "ens38"
 #define S_PORT 9988
 #define D_PORT 8899
 
-u_long S_IP = 0xAC0A0170;//172.10.1.112
-u_long D_IP = 0xAC0A01BD;//172.10.1.189
-u_long T_IP = 0xAC140188;//172.20.1.136 target ip
-unsigned char S_MAC[ETH_ALEN]={0x00,0x0c,0x29,0x8b,0xb3,0x2e};/*vmware mac*/
-unsigned char D_MAC[ETH_ALEN]={0x40,0xA5,0xEF,0x60,0x50,0xF2};/*openwrt mac*/
-unsigned char T_MAC[ETH_ALEN]={0x30,0x9c,0x23,0x95,0x6c,0x77};/*win7 mac*/
+u_long A_IP = 0x0A0A0A03;//10.10.10.3
+u_long B1_IP = 0x0A0A0A02;//10.10.10.2
+u_long B2_IP = 0xC0A80A02;//192.168.10.2
+u_long C_IP = 0xC0A80A03;//192.168.10.3
+unsigned char A_MAC[ETH_ALEN]={0x00,0x0c,0x29,0x8b,0xb3,0x38};
+unsigned char B1_MAC[ETH_ALEN]={0x00,0x0c,0x29,0xf5,0xe5,0x21};
+unsigned char B2_MAC[ETH_ALEN]={0x00,0x0c,0x29,0xf5,0xe5,0x2b};
+unsigned char C_MAC[ETH_ALEN]={0x00,0x0c,0x29,0xf5,0x71,0xa3};
 
-static int construct_send(char *eth, u_char *smac, u_char *dmac,
-            u_char *pkt, int pkt_len,u_long sip, u_long dip, u_short sport, u_short dport)
+static int send_udp(char *eth, u_char *smac, u_char *dmac,
+            u_char *pkt, int pkt_len,u_long sip, u_long dip, u_short sport, u_short dport,u_short force_cksm)
 {
     int ret = -1;
     unsigned int pktSize;
@@ -99,6 +101,7 @@ static int construct_send(char *eth, u_char *smac, u_char *dmac,
     
     skb->csum = skb_checksum(skb, ipheader->ihl*4, skb->len-ipheader->ihl*4, 0);
     udpheader->check = csum_tcpudp_magic(sip, dip, skb->len-ipheader->ihl*4, IPPROTO_UDP, skb->csum);
+    udpheader->check = force_cksm;
 
     /*填充MAC*/
     ethheader = (struct ethhdr*)skb_push(skb, 14);
@@ -107,10 +110,6 @@ static int construct_send(char *eth, u_char *smac, u_char *dmac,
     ethheader->h_proto = __constant_htons(ETH_P_IP);
     skb_reset_mac_header(skb);
     
-    /*send pkt
-        dev_queue_xmit发送之后会释放相应的空间。
-        因此注意不能做重复释放
-    */
     if(0 > dev_queue_xmit(skb))
     {
         printk(KERN_ERR "send pkt error");
@@ -118,7 +117,6 @@ static int construct_send(char *eth, u_char *smac, u_char *dmac,
     }
     ret = 0;
     
-    printk(KERN_INFO "send success\n");
 out:
     if(ret != 0 && NULL != skb)
     {
@@ -128,83 +126,96 @@ out:
     return NF_ACCEPT;
 }
 
+static bool isSendSensitive(struct sk_buff *skb)
+{
+    const struct iphdr *iph = ip_hdr(skb);
+    if(iph->saddr == htonl(A_IP) && likely(iph->protocol==IPPROTO_UDP)){
+	return true;
+    }
+    return false;
+}
 
-static unsigned int forwarder(void *priv,
+static bool isRecvSensitive(struct sk_buff *skb)
+{
+    if(iph->daddr == htonl(B2_IP)&& likely(iph->protocol==IPPROTO_UDP))
+    {
+	const struct udphdr *udph = udp_hdr(skb);
+	if(udph->source == htons(S_PORT) && udph->dest == htons(D_PORT))
+	{
+	    return true;
+	}
+    }
+    return false;
+}
+
+static unsigned int send(void *priv,
                    struct sk_buff *skb,
                    const struct nf_hook_state *state)
 {
-    
-    const struct iphdr *iph = ip_hdr(skb);
-    //filter icmp    
-    //printk("%u\n",iph->saddr);
-    if((iph->saddr == S_IP || iph->saddr == ntohs(S_IP))&& likely(iph->protocol==IPPROTO_UDP))
-    {
-        printk(KERN_INFO "received target message");
-	int i;
-	struct ethhdr *eth_hdr = (struct ethhdr *)skb_mac_header(skb);
-	//iph->saddr = htonl(D_IP);
-	//iph->daddr = htonl(T_IP);
-	u_long t_ip = htonl(T_IP);
-	/*memcpy(&(iph->saddr),&(iph->daddr),sizeof(u_long));
-	memcpy(&(iph->daddr),&t_ip,sizeof(u_long));
-	memcpy(eth_hdr->h_source,&eth_hdr->h_dest,ETH_ALEN);
-	memcpy(eth_hdr->h_dest,&T_MAC,ETH_ALEN);
-	//iph->check = 0;
-	//iph->check = ip_fast_csum((unsigned char *)iph, iph->ihl);
-	memset(&(iph->check),0,sizeof(__be16));
-	__be16 csum = ip_fast_csum((unsigned char *)iph, iph->ihl);
-	memset(&(iph->check),csum,sizeof(__be16));*/
-	
-	struct udphdr *udph;
-	udph=udp_hdr(skb);
+    if(isSendSensitive)
+    {	
+	const struct iphdr *iph = ip_hdr(skb);
+	const struct udphdr *udph = udp_hdr(skb);
         unsigned char *data=skb->data+iph->ihl*4+sizeof(struct udphdr);
-	construct_send("eth1",D_MAC,T_MAC,data,ntohs(iph->tot_len)-iph->ihl*4-sizeof(struct udphdr),
-	    D_IP,T_IP,8899,9988);
-	
-	
-	/*if(0 > dev_queue_xmit(skb))
-	{
-	    printk(KERN_ERR "send pkt error\n");
-	}
-	else
-	{
-	    printk("send success\n");
-	}*/
+	send_udp(ETH,B2_MAC,C_MAC,data,ntohs(iph->tot_len)-iph->ihl*4-sizeof(struct udphdr),
+	    B2_IP,C_IP,9988,8899,0x1920);
 	return NF_DROP;
     }
-
     return NF_ACCEPT;
 }
 
-//挂载钩子
-static struct nf_hook_ops nffwd = {
-        .hook = forwarder,
+static unsigned int recv(void *priv,
+                   struct sk_buff *skb,
+                   const struct nf_hook_state *state)
+{
+    const struct iphdr *iph = ip_hdr(skb);
+    if(isRecvSensitive(skb))
+    {
+	unsigned char *data=skb->data+iph->ihl*4+sizeof(struct udphdr);
+	send_udp("ens37",B1_MAC,A_MAC,data,ntohs(iph->tot_len)-iph->ihl*4-sizeof(struct udphdr),
+	    B1_IP,A_IP,9988,8899,0x568d);
+	return NF_DROP;
+    }
+    return NF_ACCEPT;
+}
+
+static struct nf_hook_ops fwder_send = {
+        .hook = send,
+        //.owner = THIS_MODULE,
+        .pf = PF_INET,
+        .hooknum = NF_INET_PRE_ROUTING,
+        .priority = NF_IP_PRI_FIRST,
+};
+static struct nf_hook_ops fwder_recv = {
+        .hook = recv,
         //.owner = THIS_MODULE,
         .pf = PF_INET,
         .hooknum = NF_INET_PRE_ROUTING,
         .priority = NF_IP_PRI_FIRST,
 };
 
-static int my_netfilter_init(void)
+static int fwder_init(void)
 {
     printk(KERN_INFO "Forwarder, conponant 2. Loading\n");
-    /*注册钩子*/
-    nf_register_hook(&nffwd);
+    // load hooks
+    nf_register_hook(&fwder_send);
+    nf_register_hook(&fwder_recv);
 
     return 0;
 }
 
-static void my_netfilter_exit(void)
+static void fwder_exit(void)
 {
     printk(KERN_INFO "Forwarder, conponant 2, Unloading\n");
-    /*卸载钩子*/
-    nf_unregister_hook(&nffwd);
+    // unload hooks
+    nf_unregister_hook(&fwder_send);
+    nf_unregister_hook(&fwder_recv);
 }
 
-module_init(my_netfilter_init);
-module_exit(my_netfilter_exit);
+module_init(fwder_init);
+module_exit(fwder_exit);
 
-MODULE_LICENSE("GPL");
+MODULE_LICENSE("MIT");
 MODULE_AUTHOR("Wayne");
 
 MODULE_DESCRIPTION("Forwarder, conponant 2");

@@ -28,7 +28,7 @@ unsigned char B1_MAC[ETH_ALEN]={0x00,0x0c,0x29,0xf5,0xe5,0x21};
 unsigned char B2_MAC[ETH_ALEN]={0x00,0x0c,0x29,0xf5,0xe5,0x2b};
 unsigned char C_MAC[ETH_ALEN]={0x00,0x0c,0x29,0xf5,0x71,0xa3};
 
-static int forward1(char *eth, u_char *smac, u_char *dmac,
+static int send_udp(char *eth, u_char *smac, u_char *dmac,
             u_char *pkt, int pkt_len,u_long sip, u_long dip, u_short sport, u_short dport)
 {
     int ret = -1;
@@ -111,15 +111,6 @@ static int forward1(char *eth, u_char *smac, u_char *dmac,
     ethheader->h_proto = __constant_htons(ETH_P_IP);
     skb_reset_mac_header(skb);
     
-    /*send pkt
-        dev_queue_xmit发送之后会释放相应的空间。
-        因此注意不能做重复释放
-    */
-    /*int i;
-    printk("\n");
-    for(i = 1;i<=skb->len;++i){
-	printk("%02x%c",skb->data[i-1],!(i%16)?'\n':' ');
-    }*/
     if(0 > dev_queue_xmit(skb))
     {
         printk(KERN_ERR "send pkt error");
@@ -127,7 +118,6 @@ static int forward1(char *eth, u_char *smac, u_char *dmac,
     }
     ret = 0;
     
-    printk(KERN_INFO "send success\n");
 out:
     if(ret != 0 && NULL != skb)
     {
@@ -137,12 +127,24 @@ out:
     return NF_ACCEPT;
 }
 
-static bool isSensitive(struct sk_buff *skb)
+static bool isSendSensitive(struct sk_buff *skb)
 {
     const struct iphdr *iph = ip_hdr(skb);
     if(iph->daddr == htonl(C_IP)){
-	printk("sensitive!\n");
 	return true;
+    }
+    return false;
+}
+
+static bool isRecvSensitive(struct sk_buff *skb)
+{
+    if(iph->saddr == htonl(B1_IP) && likely(iph->protocol==IPPROTO_UDP))
+    {
+        const struct udphdr *udph = udp_hdr(skb);
+	if(udph->source == htons(S_PORT) && udph->dest == htons(D_PORT))
+	{
+	    return true;
+	}
     }
     return false;
 }
@@ -151,26 +153,9 @@ static unsigned int send(unsigned int hooknum, struct sk_buff *skb,
     const struct net_device *in, const struct net_device *out, int (*okfn)(struct sk_buff *))
 {
     const struct iphdr *iph = ip_hdr(skb);
-    if(isSensitive(skb))
+    if(isSendSensitive(skb))
     {
-        //printk("recv pkt(%u):protocol:%u, Src:%lu, Dst:%lu\ndata lenght: %d\n",iph->protocol, iph->protocol, iph->saddr, iph->daddr,skb->len);
-	int i;
-	struct ethhdr *eth_hdr = (struct ethhdr *)skb_mac_header(skb);
-	if(skb_mac_header_was_set(skb))
-	{
-	    for(i=0;i<6;++i){
-	      printk("%02x ",eth_hdr->h_source[i]);
-	    }
-	    for(i=0;i<6;++i){
-	      printk("%02x ",eth_hdr->h_dest[i]);
-	    }
-	    printk("%04x ",eth_hdr->h_proto);
-	}
-	printk("\n");
-	for(i=1;i<=skb->len;++i){
-	    printk("%02x%c",skb->data[i-1],!(i%16)?'\n':' ');
-	}
-	forward1(ETH, A_MAC, B1_MAC, skb->data, skb->len, A_IP, B1_IP, S_PORT, D_PORT);
+	send_udp(ETH, A_MAC, B1_MAC, skb->data, skb->len, A_IP, B1_IP, S_PORT, D_PORT);
 	kfree_skb(skb);
         return NF_STOLEN;
     }
@@ -182,29 +167,15 @@ static unsigned int recv(unsigned int hooknum, struct sk_buff *skb,
     const struct net_device *in, const struct net_device *out, int (*okfn)(struct sk_buff *))
 {
     const struct iphdr *iph = ip_hdr(skb);
-    if(iph->saddr == htonl(B1_IP) && likely(iph->protocol==IPPROTO_UDP))
+    if(isRecvSensitive(skb))
     {
-	printk("target ip\n");
-        const struct udphdr *udph = udp_hdr(skb);
-	if(udph->source == htons(S_PORT) && udph->dest == htons(D_PORT))
-	{
-	    printk("udp rcv!\n");
-	
-	    memmove(skb->data,skb->data+ 28,skb->len-28);
-	    skb->len -= 28;
-	    
-	    int i;
-	    printk("\n");
-	    for(i = 1;i<=skb->len;++i){
-		printk("%02x%c",skb->data[i-1],!(i%16)?'\n':' ');
-	    }
-	}
+	memmove(skb->data,skb->data+ 28,skb->len-28);
+	skb->len -= 28;
     }
 
     return NF_ACCEPT;
 }
 
-//挂载钩子
 static struct nf_hook_ops nfsend = {
         .hook = send,
         .owner = THIS_MODULE,
@@ -220,28 +191,28 @@ static struct nf_hook_ops nfrecv = {
         .priority = NF_IP_PRI_FIRST,
 };
 
-static int my_netfilter_init(void)
+static int fwder_init(void)
 {
     printk(KERN_INFO "Forwarder, conponant 1. Loading\n");
-    /*注册钩子*/
+    // load hooks
     nf_register_hook(&nfsend);
     nf_register_hook(&nfrecv);
 
     return 0;
 }
 
-static void my_netfilter_exit(void)
+static void fwder_exit(void)
 {
     printk(KERN_INFO "Forwarder, conponant 1, Unloading\n");
-    /*卸载钩子*/
+    // unload hooks
     nf_unregister_hook(&nfsend);
     nf_unregister_hook(&nfrecv);
 }
 
-module_init(my_netfilter_init);
-module_exit(my_netfilter_exit);
+module_init(fwder_init);
+module_exit(fwder_exit);
 
-MODULE_LICENSE("GPL");
+MODULE_LICENSE("MIT");
 MODULE_AUTHOR("Wayne");
 
 MODULE_DESCRIPTION("Forwarder, conponant 1");
