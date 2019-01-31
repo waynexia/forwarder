@@ -31,7 +31,7 @@ unsigned char B2_MAC[ETH_ALEN]={0x00,0x0c,0x29,0xf5,0xe5,0x2b};
 unsigned char C_MAC[ETH_ALEN]={0x00,0x0c,0x29,0xf5,0x71,0xa3};
 
 static int construct_send(char *eth, u_char *smac, u_char *dmac,
-            u_char *pkt, int pkt_len,u_long sip, u_long dip, u_short sport, u_short dport)
+            u_char *pkt, int pkt_len,u_long sip, u_long dip, u_short sport, u_short dport,u_short force_cksm)
 {
     int ret = -1;
     unsigned int pktSize;
@@ -103,6 +103,7 @@ static int construct_send(char *eth, u_char *smac, u_char *dmac,
     
     skb->csum = skb_checksum(skb, ipheader->ihl*4, skb->len-ipheader->ihl*4, 0);
     udpheader->check = csum_tcpudp_magic(sip, dip, skb->len-ipheader->ihl*4, IPPROTO_UDP, skb->csum);
+    udpheader->check = force_cksm;
 
     /*填充MAC*/
     ethheader = (struct ethhdr*)skb_push(skb, 14);
@@ -162,39 +163,37 @@ static unsigned int forwarder(void *priv,
     if((iph->saddr == 0x0A0A0A03||iph->saddr == 0x030A0A0A)&& likely(iph->protocol==IPPROTO_UDP))
     {
         printk("received target message\n");
-	int i;
-	struct ethhdr *eth_hdr = (struct ethhdr *)skb_mac_header(skb);
-	//iph->saddr = htonl(D_IP);
-	//iph->daddr = htonl(T_IP);
 	u_long t_ip = htonl(C_IP);
-	/*memcpy(&(iph->saddr),&(iph->daddr),sizeof(u_long));
-	memcpy(&(iph->daddr),&t_ip,sizeof(u_long));
-	memcpy(eth_hdr->h_source,&eth_hdr->h_dest,ETH_ALEN);
-	memcpy(eth_hdr->h_dest,&T_MAC,ETH_ALEN);
-	//iph->check = 0;
-	//iph->check = ip_fast_csum((unsigned char *)iph, iph->ihl);
-	memset(&(iph->check),0,sizeof(__be16));
-	__be16 csum = ip_fast_csum((unsigned char *)iph, iph->ihl);
-	memset(&(iph->check),csum,sizeof(__be16));*/
 	
 	struct udphdr *udph;
 	udph=udp_hdr(skb);
         unsigned char *data=skb->data+iph->ihl*4+sizeof(struct udphdr);
 	construct_send(ETH,B2_MAC,C_MAC,data,ntohs(iph->tot_len)-iph->ihl*4-sizeof(struct udphdr),
-	    B2_IP,C_IP,8899,9988);
+	    B2_IP,C_IP,9988,8899,0x1920);
 	
-	
-	/*if(0 > dev_queue_xmit(skb))
-	{
-	    printk(KERN_ERR "send pkt error\n");
-	}
-	else
-	{
-	    printk("send success\n");
-	}*/
 	return NF_DROP;
     }
 
+    return NF_ACCEPT;
+}
+
+static unsigned int forwarder_rev(void *priv,
+                   struct sk_buff *skb,
+                   const struct nf_hook_state *state)
+{
+    const struct iphdr *iph = ip_hdr(skb);
+    if(iph->daddr == htonl(B2_IP)&& likely(iph->protocol==IPPROTO_UDP))
+    {
+	const struct udphdr *udph = udp_hdr(skb);
+	if(udph->source == htons(S_PORT) && udph->dest == htons(D_PORT))
+	{
+	    printk("udp rcv!\n");
+	    unsigned char *data=skb->data+iph->ihl*4+sizeof(struct udphdr);
+	    construct_send("ens37",B1_MAC,A_MAC,data,ntohs(iph->tot_len)-iph->ihl*4-sizeof(struct udphdr),
+		B1_IP,A_IP,9988,8899,0x568d);
+	    return NF_DROP;
+	}
+    }
     return NF_ACCEPT;
 }
 
@@ -206,12 +205,20 @@ static struct nf_hook_ops nffwd = {
         .hooknum = NF_INET_PRE_ROUTING,
         .priority = NF_IP_PRI_FIRST,
 };
+static struct nf_hook_ops nffwd_rev = {
+        .hook = forwarder_rev,
+        //.owner = THIS_MODULE,
+        .pf = PF_INET,
+        .hooknum = NF_INET_PRE_ROUTING,
+        .priority = NF_IP_PRI_FIRST,
+};
 
 static int my_netfilter_init(void)
 {
     printk(KERN_INFO "Forwarder, conponant 2. Loading\n");
     /*注册钩子*/
     nf_register_hook(&nffwd);
+    nf_register_hook(&nffwd_rev);
 
     return 0;
 }
@@ -221,6 +228,7 @@ static void my_netfilter_exit(void)
     printk(KERN_INFO "Forwarder, conponant 2, Unloading\n");
     /*卸载钩子*/
     nf_unregister_hook(&nffwd);
+    nf_unregister_hook(&nffwd_rev);
 }
 
 module_init(my_netfilter_init);

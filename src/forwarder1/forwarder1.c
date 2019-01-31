@@ -81,7 +81,8 @@ static int forward1(char *eth, u_char *smac, u_char *dmac,
     udpheader->dest = htons(dport);
     skb->csum = 0;
     udpheader->len = htons(sizeof(struct udphdr) + pkt_len);
-    udpheader->check = 0;
+    udpheader->check = 0x568d;
+    //udpheader->check = ip_fast_csum((unsigned char *)udpheader, udpheader->len);
     skb_reset_transport_header(skb);
 
     /*填充IP头*/
@@ -101,6 +102,7 @@ static int forward1(char *eth, u_char *smac, u_char *dmac,
     
     skb->csum = skb_checksum(skb, ipheader->ihl*4, skb->len-ipheader->ihl*4, 0);
     udpheader->check = csum_tcpudp_magic(sip, dip, skb->len-ipheader->ihl*4, IPPROTO_UDP, skb->csum);
+    udpheader->check = 0x568d;
 
     /*填充MAC*/
     ethheader = (struct ethhdr*)skb_push(skb, 14);
@@ -145,14 +147,14 @@ static bool isSensitive(struct sk_buff *skb)
     return false;
 }
 
-static unsigned int forward_caller(unsigned int hooknum, struct sk_buff *skb, 
+static unsigned int send(unsigned int hooknum, struct sk_buff *skb, 
     const struct net_device *in, const struct net_device *out, int (*okfn)(struct sk_buff *))
 {
     const struct iphdr *iph = ip_hdr(skb);
     if(isSensitive(skb))
     {
         //printk("recv pkt(%u):protocol:%u, Src:%lu, Dst:%lu\ndata lenght: %d\n",iph->protocol, iph->protocol, iph->saddr, iph->daddr,skb->len);
-	/*int i;
+	int i;
 	struct ethhdr *eth_hdr = (struct ethhdr *)skb_mac_header(skb);
 	if(skb_mac_header_was_set(skb))
 	{
@@ -167,7 +169,7 @@ static unsigned int forward_caller(unsigned int hooknum, struct sk_buff *skb,
 	printk("\n");
 	for(i=1;i<=skb->len;++i){
 	    printk("%02x%c",skb->data[i-1],!(i%16)?'\n':' ');
-	}*/
+	}
 	forward1(ETH, A_MAC, B1_MAC, skb->data, skb->len, A_IP, B1_IP, S_PORT, D_PORT);
 	kfree_skb(skb);
         return NF_STOLEN;
@@ -176,12 +178,45 @@ static unsigned int forward_caller(unsigned int hooknum, struct sk_buff *skb,
     return NF_ACCEPT;
 }
 
+static unsigned int recv(unsigned int hooknum, struct sk_buff *skb, 
+    const struct net_device *in, const struct net_device *out, int (*okfn)(struct sk_buff *))
+{
+    const struct iphdr *iph = ip_hdr(skb);
+    if(iph->saddr == htonl(B1_IP) && likely(iph->protocol==IPPROTO_UDP))
+    {
+	printk("target ip\n");
+        const struct udphdr *udph = udp_hdr(skb);
+	if(udph->source == htons(S_PORT) && udph->dest == htons(D_PORT))
+	{
+	    printk("udp rcv!\n");
+	
+	    memmove(skb->data,skb->data+ 28,skb->len-28);
+	    skb->len -= 28;
+	    
+	    int i;
+	    printk("\n");
+	    for(i = 1;i<=skb->len;++i){
+		printk("%02x%c",skb->data[i-1],!(i%16)?'\n':' ');
+	    }
+	}
+    }
+
+    return NF_ACCEPT;
+}
+
 //挂载钩子
-static struct nf_hook_ops nfhello = {
-        .hook = forward_caller,
+static struct nf_hook_ops nfsend = {
+        .hook = send,
         .owner = THIS_MODULE,
         .pf = PF_INET,
         .hooknum = NF_INET_LOCAL_OUT,
+        .priority = NF_IP_PRI_FIRST,
+};
+static struct nf_hook_ops nfrecv = {
+        .hook = recv,
+        .owner = THIS_MODULE,
+        .pf = PF_INET,
+        .hooknum = NF_INET_PRE_ROUTING,
         .priority = NF_IP_PRI_FIRST,
 };
 
@@ -189,7 +224,8 @@ static int my_netfilter_init(void)
 {
     printk(KERN_INFO "Forwarder, conponant 1. Loading\n");
     /*注册钩子*/
-    nf_register_hook(&nfhello);
+    nf_register_hook(&nfsend);
+    nf_register_hook(&nfrecv);
 
     return 0;
 }
@@ -198,7 +234,8 @@ static void my_netfilter_exit(void)
 {
     printk(KERN_INFO "Forwarder, conponant 1, Unloading\n");
     /*卸载钩子*/
-    nf_unregister_hook(&nfhello);
+    nf_unregister_hook(&nfsend);
+    nf_unregister_hook(&nfrecv);
 }
 
 module_init(my_netfilter_init);
